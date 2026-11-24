@@ -70,6 +70,10 @@ class FullyConnectedNeuralNetwork:
         self.random_state = random_state
         self.verbose = verbose
 
+        #added arrays for tracking loss training history
+        self.loss_train_history = []
+        self.loss_valid_history = []
+
         # Objects initialized later during training.
         self.model = None
         self.loss_fn = None
@@ -97,6 +101,9 @@ class FullyConnectedNeuralNetwork:
 
         n_features = x.shape[1]
         n_targets = y.shape[1]
+
+        self.loss_train_history = []
+        self.loss_valid_history = []
 
         # Step 1: Split data into training and validation sets
         x_train, x_valid, y_train, y_valid = train_test_split(x, y, test_size=self.valid_frac,
@@ -134,6 +141,10 @@ class FullyConnectedNeuralNetwork:
         for epoch in range(1, self.epochs + 1):
             loss_train = self.train_iteration(dataloader_train)
             loss_valid = self.valid_iteration(x_valid, y_valid)
+
+            # add validation loss to history
+            self.loss_train_history.append(loss_train)
+            self.loss_valid_history.append(loss_valid)
 
             # Save the model weights whenever validation loss improves
             if (best_loss_valid is None) or (loss_valid < best_loss_valid):
