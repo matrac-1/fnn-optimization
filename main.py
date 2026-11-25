@@ -72,10 +72,10 @@ param_grid = dict(
     ],
 
     batch_size=[
-        16,
         32,
-        64,
-        128
+        128,
+        512,
+        2048
     ],
 
     weight_decay=[
@@ -86,8 +86,8 @@ param_grid = dict(
     ]
 )
 
-hpOptimization = False
-if hpOptimization:
+doHPOpt = True
+if doHPOpt:
     # Track iterations for progress bar
     c_iter = 0
     n_iters = len(ParameterGrid(param_grid))
@@ -142,7 +142,7 @@ if hpOptimization:
 #
 #Following sections does 4-fold validation on optimized model
 #
-doCV = True
+doCV = False
 if doCV:
     best_params = dict(
         hidden_layers=(20,20),
