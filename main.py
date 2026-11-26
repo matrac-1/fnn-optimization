@@ -86,7 +86,7 @@ param_grid = dict(
     ]
 )
 
-doHPOpt = True
+doHPOpt = False
 if doHPOpt:
     # Track iterations for progress bar
     c_iter = 0
@@ -142,16 +142,17 @@ if doHPOpt:
 #
 #Following sections does 4-fold validation on optimized model
 #
-doCV = False
-if doCV:
-    best_params = dict(
-        hidden_layers=(20,20),
-        activation="relu",
-        learning_rate=0.001,
-        batch_size=64,
-        weight_decay=0.0001
+
+best_params = dict(
+        hidden_layers=(20,10),
+        activation="sigmoid",
+        learning_rate=0.01,
+        batch_size=32,
+        weight_decay=0.0
     )
 
+doCV = True
+if doCV:
     kf = KFold(n_splits=4, shuffle=True, random_state=0)
 
     records_cv = []
@@ -212,3 +213,191 @@ if doCV:
     plt.tight_layout()
     plt.savefig(os.path.join("figures", "figure_4fold_learning_curves.png"), dpi=300)
     plt.show()
+
+#
+#This section uses 3-fold cross validation to compare effect of hyperparameters of model error
+#
+
+#
+# Hyperparameter sensitivity analysis (3-fold CV)
+#
+
+doSensitivity = True
+if doSensitivity:
+
+    sensitivity_grid = {
+        "hidden_layers": [
+            (5,),
+            (10,),
+            (20,10), #optimal
+            (20,20),
+            (50,50)
+        ],
+
+        "activation": [
+            "sigmoid", #optimal
+            "tanh",
+            "relu",
+            "leakyrelu"
+        ],
+
+        "learning_rate": [
+            1e-4,
+            1e-3,
+            1e-2, #optimal
+            5e-2,
+            1e-1
+        ],
+
+        "batch_size": [
+            8,
+            16,
+            32, #optimal
+            64,
+            128
+        ],
+
+        "weight_decay": [
+            0.0, #optimal
+            1e-6,
+            1e-5,
+            1e-4,
+            1e-3
+        ]
+    }
+
+    kf = KFold(n_splits=3, shuffle=True, random_state=0)
+
+    records_cv2 = []
+
+    for param_name, test_values in sensitivity_grid.items():
+
+        print(f"\nTesting {param_name}")
+
+        for value in test_values:
+
+            params = best_params.copy()
+            params[param_name] = value
+
+            for fold, (train_idx, test_idx) in enumerate(kf.split(x), start=1):
+
+                x_train, x_test = x[train_idx], x[test_idx]
+                y_train, y_test = y[train_idx], y[test_idx]
+
+                model = FullyConnectedNeuralNetwork(
+                    epochs=100,
+                    verbose=False,
+                    random_state=0,
+                    **params
+                )
+
+                model.fit(x_train, y_train)
+
+                y_pred = model.predict(x_test)
+
+                iqr = np.quantile(y_test, 0.75, axis=0) - np.quantile(y_test, 0.25, axis=0)
+
+                for j, target in enumerate(targets):
+
+                    rmse = root_mean_squared_error(
+                        y_test[:, j],
+                        y_pred[:, j]
+                    )
+
+                    nrmse = rmse / iqr[j]
+
+                    records_cv2.append((
+                        param_name,
+                        str(value),
+                        fold,
+                        target,
+                        rmse,
+                        nrmse
+                    ))
+
+    df_sensitivity = pd.DataFrame(
+        records_cv2,
+        columns=[
+            "Hyperparameter",
+            "Value",
+            "Fold",
+            "Target",
+            "RMSE",
+            "NRMSE"
+        ]
+    )
+
+    df_sensitivity_summary = (
+        df_sensitivity
+        .groupby(["Hyperparameter", "Value", "Target"])
+        .agg(
+            RMSE_Mean=("RMSE", "mean"),
+            RMSE_Std=("RMSE", "std"),
+            NRMSE_Mean=("NRMSE", "mean"),
+            NRMSE_Std=("NRMSE", "std")
+        )
+        .reset_index()
+    )
+
+    df_sensitivity.to_csv(
+        os.path.join(
+            "tables",
+            "table_hyperparameter_sensitivity_raw.csv"
+        ),
+        index=False
+    )
+
+    df_sensitivity_summary.to_csv(
+        os.path.join(
+            "tables",
+            "table_hyperparameter_sensitivity_summary.csv"
+        ),
+        index=False
+    )
+
+    for param in df_sensitivity_summary["Hyperparameter"].unique():
+
+        temp = df_sensitivity_summary[
+            df_sensitivity_summary["Hyperparameter"] == param
+        ]
+
+        plt.figure(figsize=(6,4))
+
+        for target in targets:
+
+            target_data = temp[temp["Target"] == target]
+
+            plt.errorbar(
+                range(len(target_data)),
+                target_data["NRMSE_Mean"],
+                yerr=target_data["NRMSE_Std"],
+                marker="o",
+                capsize=4,
+                label=target
+            )
+
+        plt.xticks(
+            range(len(target_data)),
+            target_data["Value"],
+            rotation=30
+        )
+
+        plt.xlabel(param)
+        plt.ylabel("Mean NRMSE")
+        plt.title(f"Effect of {param} on Model Error")
+        plt.legend()
+        plt.grid()
+
+        plt.tight_layout()
+
+        plt.savefig(
+            os.path.join(
+                "figures",
+                f"figure_{param}_sensitivity.png"
+            ),
+            dpi=300
+        )
+
+        plt.close()
+
+    print(df_sensitivity_summary)
