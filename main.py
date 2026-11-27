@@ -22,9 +22,12 @@ import random
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.linear_model import LinearRegression
 from sklearn.metrics import root_mean_squared_error
-from sklearn.model_selection import train_test_split, ParameterGrid, KFold
+from sklearn.model_selection import train_test_split, ParameterGrid, KFold, GridSearchCV
 import matplotlib.pyplot as plt
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 
 from classes import FullyConnectedNeuralNetwork
 from functions import progress_bar
@@ -47,6 +50,10 @@ y = df.loc[:, targets].to_numpy()
 
 # Split the data into training and testing sets
 x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=0)
+x_train_orig = x_train.copy()
+y_train_orig = y_train.copy()
+x_test_orig = x_test.copy()
+y_test_orig = y_test.copy()
 
 # Define the hyperparameter search space
 param_grid = dict(
@@ -151,7 +158,7 @@ best_params = dict(
         weight_decay=0.0
     )
 
-doCV = True
+doCV = False
 if doCV:
     kf = KFold(n_splits=4, shuffle=True, random_state=0)
 
@@ -315,6 +322,7 @@ if doSensitivity:
                         nrmse
                     ))
 
+
     df_sensitivity = pd.DataFrame(
         records_cv2,
         columns=[
@@ -359,13 +367,24 @@ if doSensitivity:
 
         temp = df_sensitivity_summary[
             df_sensitivity_summary["Hyperparameter"] == param
-        ]
+            ]
 
-        plt.figure(figsize=(6,4))
+        order = [str(v) for v in sensitivity_grid[param]]
+
+        plt.figure(figsize=(6, 4))
 
         for target in targets:
+            target_data = temp[
+                temp["Target"] == target
+                ].copy()
 
-            target_data = temp[temp["Target"] == target]
+            target_data["Value"] = pd.Categorical(
+                target_data["Value"],
+                categories=order,
+                ordered=True
+            )
+
+            target_data = target_data.sort_values("Value")
 
             plt.errorbar(
                 range(len(target_data)),
@@ -377,8 +396,8 @@ if doSensitivity:
             )
 
         plt.xticks(
-            range(len(target_data)),
-            target_data["Value"],
+            range(len(order)),
+            order,
             rotation=30
         )
 
@@ -401,3 +420,75 @@ if doSensitivity:
         plt.close()
 
     print(df_sensitivity_summary)
+
+doPoly = True
+if doPoly:
+    # model is created. polynomial features' degree is undefined to be optimized later
+    polymodel = make_pipeline(StandardScaler(), PolynomialFeatures(include_bias=False), LinearRegression())
+
+    # grid of hyperparameters (poly. degrees) to try
+    param_grid = dict(polynomialfeatures__degree=[i for i in range(1, 6)])
+
+    # gscv model is made and fitted. neg. RMSE and r^2 and found and rmse is used for the fitting metric of the model.
+    # hyperparameter model performances
+    poly_gscv = GridSearchCV(polymodel, param_grid=param_grid, cv=4,
+                             scoring={"rmse": "neg_root_mean_squared_error", "r2": "r2"}, refit="rmse",
+                             return_train_score=True)
+    poly_gscv.fit(x_train_orig, y_train_orig)
+
+    # results extraction for analysis of poly. model. results are first "converted" to pandas df.
+    results_poly = pd.DataFrame(poly_gscv.cv_results_)
+    print("Best degree:", poly_gscv.best_params_["polynomialfeatures__degree"])
+    print("Best RMSE:", -poly_gscv.best_score_)
+
+    # useful columns of results are put in its own df
+    summary_poly = pd.DataFrame({
+        "Poly. degree": results_poly["param_polynomialfeatures__degree"],
+        "RMSE": -results_poly["mean_test_rmse"],
+        "RMSE Std. dev.": results_poly["std_test_rmse"],
+        "R²": results_poly["mean_test_r2"],
+        "R² Std. dev.": results_poly["std_test_r2"]
+    })
+
+    # this code saves gridsearch cv scoring results into tables in a.csv format
+    summary_poly.to_csv(os.path.join("tables", "poly_grid_search_CV_results.csv"), index=False)
+
+    best_poly = poly_gscv.best_estimator_
+    y_pred = best_poly.predict(x_test_orig)
+    iqr = np.quantile(y_test_orig, 0.75, axis=0) - np.quantile(y_test_orig, 0.25, axis=0)
+    records_poly = []
+
+    for j, target in enumerate(targets):
+
+        rmse = root_mean_squared_error(
+            y_test_orig[:, j],
+            y_pred[:, j]
+        )
+
+        nrmse = rmse / iqr[j]
+
+        records_poly.append((
+            target,
+            rmse,
+            nrmse
+        ))
+
+    df_poly_test = pd.DataFrame(
+        records_poly,
+        columns=[
+            "Target",
+            "RMSE",
+            "NRMSE"
+        ]
+    )
+
+    print("\nPolynomial Test-Set Performance")
+    print(df_poly_test)
+
+    df_poly_test.to_csv(
+        os.path.join(
+            "tables",
+            "table_polynomial_test_performance.csv"
+        ),
+        index=False
+    )
